@@ -6,6 +6,10 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <getopt.h>
+#include <string>
+#include <iostream>
+#include <fstream>
+#include <sstream>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 
@@ -19,7 +23,8 @@
 #define DEFAULT_REMOTE_HOST "131.179.176.34"
 #define DEFAULT_REMOTE_PORT 5001
 
-struct server_app {
+struct server_app
+{
     // Parameters of the server
     // Local port of HTTP server
     uint16_t server_port;
@@ -50,7 +55,8 @@ int main(int argc, char *argv[])
     parse_args(argc, argv, &app);
 
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_socket == -1) {
+    if (server_socket == -1)
+    {
         perror("socket failed");
         exit(EXIT_FAILURE);
     }
@@ -64,25 +70,29 @@ int main(int argc, char *argv[])
     int optval = 1;
     setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
 
-    if (bind(server_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
+    if (bind(server_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1)
+    {
         perror("bind failed");
         exit(EXIT_FAILURE);
     }
 
-    if (listen(server_socket, 10) == -1) {
+    if (listen(server_socket, 10) == -1)
+    {
         perror("listen failed");
         exit(EXIT_FAILURE);
     }
 
     printf("Server listening on port %d\n", app.server_port);
 
-    while (1) {
-        client_socket = accept(server_socket, (struct sockaddr*)&client_addr, &client_len);
-        if (client_socket == -1) {
+    while (1)
+    {
+        client_socket = accept(server_socket, (struct sockaddr *)&client_addr, &client_len);
+        if (client_socket == -1)
+        {
             perror("accept failed");
             continue;
         }
-        
+
         printf("Accepted connection from %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
         handle_request(&app, client_socket);
         close(client_socket);
@@ -100,8 +110,10 @@ void parse_args(int argc, char *argv[], struct server_app *app)
     app->remote_host = NULL;
     app->remote_port = DEFAULT_REMOTE_PORT;
 
-    while ((opt = getopt(argc, argv, "b:r:p:")) != -1) {
-        switch (opt) {
+    while ((opt = getopt(argc, argv, "b:r:p:")) != -1)
+    {
+        switch (opt)
+        {
         case 'b':
             app->server_port = atoi(optarg);
             break;
@@ -118,12 +130,14 @@ void parse_args(int argc, char *argv[], struct server_app *app)
         }
     }
 
-    if (app->remote_host == NULL) {
+    if (app->remote_host == NULL)
+    {
         app->remote_host = strdup(DEFAULT_REMOTE_HOST);
     }
 }
 
-void handle_request(struct server_app *app, int client_socket) {
+void handle_request(struct server_app *app, int client_socket)
+{
     char buffer[BUFFER_SIZE];
     ssize_t bytes_read;
 
@@ -133,50 +147,127 @@ void handle_request(struct server_app *app, int client_socket) {
     // once as a whole.
     // However, the current version suffices for our testing.
     bytes_read = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
-    if (bytes_read <= 0) {
-        return;  // Connection closed or error
+    if (bytes_read <= 0)
+    {
+        return; // Connection closed or error
     }
 
     buffer[bytes_read] = '\0';
     // copy buffer to a new string
-    char *request = malloc(strlen(buffer) + 1);
+    char *request = (char *)malloc(strlen(buffer) + 1);
     strcpy(request, buffer);
+    const char *get_token = "GET /";
+    char *file_name_start = strstr(request, get_token) + strlen(get_token);
+    size_t file_name_len = strchr(file_name_start, ' ') - file_name_start;
+    std::string file_name(file_name_start, file_name_len);
 
     // TODO: Parse the header and extract essential fields, e.g. file name
     // Hint: if the requested path is "/" (root), default to index.html
-    char file_name[] = "index.html";
+    // char file_name[] = "index.html";
+    if (file_name == "")
+    {
+        file_name = "index.html";
+    }
+    else
+    {
+        std::string space_encoding = "%20";
+        std::string percent_encoding = "%25";
+
+        size_t found = file_name.find(space_encoding);
+        while (found != std::string::npos)
+        {
+            file_name.replace(found, space_encoding.length(), " ");
+            found = file_name.find(space_encoding);
+        }
+
+        found = file_name.find(percent_encoding);
+        while (found != std::string::npos)
+        {
+            file_name.replace(found, percent_encoding.length(), "%");
+            found = file_name.find(percent_encoding);
+        }
+    }
 
     // TODO: Implement proxy and call the function under condition
     // specified in the spec
     // if (need_proxy(...)) {
     //    proxy_remote_file(app, client_socket, file_name);
     // } else {
-    serve_local_file(client_socket, file_name);
+    serve_local_file(client_socket, file_name.c_str());
     //}
 }
 
-void serve_local_file(int client_socket, const char *path) {
+void serve_local_file(int client_socket, const char *path)
+{
     // TODO: Properly implement serving of local files
     // The following code returns a dummy response for all requests
     // but it should give you a rough idea about what a proper response looks like
-    // What you need to do 
+    // What you need to do
     // (when the requested file exists):
     // * Open the requested file
     // * Build proper response headers (see details in the spec), and send them
     // * Also send file content
     // (When the requested file does not exist):
     // * Generate a correct response
+    std::ifstream file(path);
+    if (!file.is_open())
+    {
+        char response[] = "HTTP/1.0 404 Not Found\r\n"
+                          "Content-Type: text/plain; charset=UTF-8\r\n"
+                          "Content-Length: 13\r\n"
+                          "\r\n"
+                          "404 Not Found";
+        send(client_socket, response, strlen(response), 0);
+        return;
+    }
 
-    char response[] = "HTTP/1.0 200 OK\r\n"
-                      "Content-Type: text/plain; charset=UTF-8\r\n"
-                      "Content-Length: 15\r\n"
-                      "\r\n"
-                      "Sample response";
+    const char *mime_type_start = nullptr;
+    for (int i = 0; path[i] != '\0'; ++i)
+    {
+        if (path[i] == '.')
+        {
+            mime_type_start = &path[i];
+        }
+    }
 
-    send(client_socket, response, strlen(response), 0);
+    std::string content_type = "application/octet-stream";
+    if (mime_type_start != nullptr)
+    {
+        std::string mime_type(mime_type_start + 1);
+        if (mime_type == "txt")
+        {
+            content_type = "text/plain; charset=UTF-8";
+        }
+        else if (mime_type == "html")
+        {
+            content_type = "text/html";
+        }
+        else if (mime_type == "jpg")
+        {
+            content_type = "image/jpeg";
+        }
+    }
+    std::stringstream response;
+    response << "HTTP/1.0 200 OK\r\n";
+    response << "Content-Type: " << content_type << "\r\n";
+
+    file.seekg(0, std::ios::end);
+    int file_length = file.tellg();
+    file.seekg(0, std::ios::beg);
+    response << "Content-Length: " << file_length << "\r\n\r\n";
+
+    send(client_socket, response.str().c_str(), strlen(response.str().c_str()), 0);
+
+    char buffer[1024];
+    while (!file.eof())
+    {
+        file.read(buffer, sizeof(buffer));
+        send(client_socket, buffer, file.gcount(), 0);
+    }
 }
 
-void proxy_remote_file(struct server_app *app, int client_socket, const char *request) {
+void proxy_remote_file(struct server_app *app, int client_socket, const char *request)
+{
     // TODO: Implement proxy request and replace the following code
     // What's needed:
     // * Connect to remote server (app->remote_server/app->remote_port)
